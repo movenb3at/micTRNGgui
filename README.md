@@ -78,8 +78,8 @@ To run this project, you need to install the following libraries:
 
 1. **Clone the Repository**
 ```bash
-git clone <repository-url>
-cd <repository-folder>
+git clone https://github.com/movenb3at/micTRNGgui.git
+cd micTRNGgui
 
 ```
 
@@ -92,11 +92,11 @@ pip install PyQt6 numpy scipy matplotlib sounddevice
 
 
 3. **Run the Application**
-Ensure that a microphone device is properly connected to your system, then run the main script (e.g., `TRNG.py`).
+Ensure that a microphone device is properly connected to your system, then run the main script (e.g., `main.py`).
 
 
 ```bash
-python TRNG.py
+python main.py
 
 ```
 
