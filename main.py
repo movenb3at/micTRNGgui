@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QPushButton, QLabel, QTextEdit, QFrame, QSplitter,
     QScrollArea, QProgressBar
 )
+
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer, Qt, QPoint
 from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QPolygon
 
