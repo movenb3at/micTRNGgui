@@ -7,13 +7,12 @@ from scipy.fft import rfft, rfftfreq
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QPushButton, QLabel, QTextEdit, QFrame, QSplitter,
-    QScrollArea, QProgressBar
+    QScrollArea, QProgressBar, QComboBox
 )
 
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer, Qt, QPoint
 from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QPolygon
 
-# Matplotlib integration safely in PyQt6
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
@@ -28,7 +27,7 @@ try:
 except Exception:
     MIC_AVAILABLE = False
 
-# 테마 색상 정의 (Modern Synthwave / Cyber Dark Theme)
+# Define theme colors (Modern Synthwave / Cyber Dark Theme)
 COLOR_BG = "#121212"
 COLOR_CARD = "#1a1a1a"
 COLOR_TEXT = "#ffffff"
@@ -44,48 +43,49 @@ COLOR_BORDER = "#2c2c2c"
 # [1. Audio Recording Thread (Real-time Stream)]
 # ---------------------------------------------------------
 class AudioWorker(QThread):
-    data_ready = pyqtSignal(np.ndarray)          # 2초 주기 TRNG 처리용
-    realtime_data_ready = pyqtSignal(np.ndarray) # 실시간 파형 렌더링용
+    data_ready = pyqtSignal(np.ndarray)          # For 2-second TRNG processing
+    realtime_data_ready = pyqtSignal(np.ndarray) # For real-time waveform rendering
     log_signal = pyqtSignal(str)
     error_signal = pyqtSignal()
     
-    def __init__(self, samplerate=44100, duration=2.0):
+    def __init__(self, samplerate=44100, duration=2.0, device_id=None):
         super().__init__()
         self.samplerate = samplerate
         self.duration = duration
+        self.device_id = device_id
         self.is_running = True
         
     def run(self):
         try:
             if not MIC_AVAILABLE:
-                self.log_signal.emit("[시스템 에러] 물리 소스(마이크) 소실로 인해 TRNG 작동이 강제 중단되었습니다.")
+                self.log_signal.emit("[System Error] TRNG operation forced to stop due to loss of physical source (microphone).")
                 self.error_signal.emit()
                 return
 
-            self.log_signal.emit("실시간 마이크 입력 스트리밍 및 TRNG 데이터 수집을 시작합니다...")
+            self.log_signal.emit("Starting real-time microphone input streaming and TRNG data collection...")
             
             target_samples = int(self.samplerate * self.duration)
             trng_buffer = []
-            chunk_size = 2048  # 약 46ms 단위로 데이터를 쪼개어 실시간성 확보
+            chunk_size = 2048  # Ensure real-time performance by splitting data into ~46ms chunks
             
-            with sd.InputStream(samplerate=self.samplerate, channels=1, dtype='int16', blocksize=chunk_size) as stream:
+            with sd.InputStream(samplerate=self.samplerate, channels=1, dtype='int16', blocksize=chunk_size, device=self.device_id) as stream:
                 while self.is_running:
                     data, overflow = stream.read(chunk_size)
                     audio_chunk = data[:, 0]
                     
-                    # 1. 실시간 비주얼라이저로 즉각 데이터 전송
+                    # 1. Send data immediately to real-time visualizer
                     self.realtime_data_ready.emit(audio_chunk.copy())
                     
-                    # 2. TRNG (2초 주기) 처리를 위해 버퍼에 누적
+                    # 2. Accumulate in buffer for TRNG processing (2-second cycle)
                     trng_buffer.extend(audio_chunk)
                     if len(trng_buffer) >= target_samples:
                         trng_data = np.array(trng_buffer[:target_samples])
                         self.data_ready.emit(trng_data)
-                        # 분석이 끝난 앞부분 2초 분량은 비우고, 남은 짜투리 데이터는 유지
+                        # Clear the analyzed first 2 seconds, keep the remaining fraction
                         del trng_buffer[:target_samples]
                         
         except Exception as e:
-            self.log_signal.emit(f"[에러 발생] 마이크 수집 실패: {str(e)}")
+            self.log_signal.emit(f"[Error] Microphone collection failed: {str(e)}")
             self.error_signal.emit()
             
     def stop(self):
@@ -93,13 +93,13 @@ class AudioWorker(QThread):
 
 # ---------------------------------------------------------
 # [2-A. Real-time High FPS Waveform Widget]
-# QPainter를 사용해 프레임 드랍 없이 초고속으로 실시간 파형을 그리는 위젯
+# Widget to draw real-time waveforms at high speed without frame drops using QPainter
 # ---------------------------------------------------------
 class RealTimeWaveWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(120)
-        self.buffer_size = 4096 * 2  # 화면에 보여줄 최근 샘플 개수
+        self.buffer_size = 4096 * 2  # Number of recent samples to display
         self.audio_buffer = np.zeros(self.buffer_size)
         
     def update_wave(self, new_data):
@@ -109,28 +109,28 @@ class RealTimeWaveWidget(QWidget):
         else:
             self.audio_buffer[:-shift] = self.audio_buffer[shift:]
             self.audio_buffer[-shift:] = new_data
-        self.update()  # 화면 다시 그리기 (paintEvent 호출)
+        self.update()  # Redraw screen (calls paintEvent)
         
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # 1. 배경 및 테두리
+        # 1. Background and border
         painter.fillRect(self.rect(), QColor(COLOR_CARD))
         painter.setPen(QPen(QColor(COLOR_BORDER), 1))
         painter.drawRect(0, 0, self.width() - 1, self.height() - 1)
         
-        # 2. 타이틀 텍스트
+        # 2. Title text
         painter.setPen(QColor(COLOR_TEXT))
         painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         painter.drawText(10, 20, "🔴 LIVE AUDIO STREAM (Real-time)")
         
-        # 3. 중앙 기준선
+        # 3. Center baseline
         mid_y = self.height() / 2
         painter.setPen(QPen(QColor(COLOR_MUTED), 1, Qt.PenStyle.DotLine))
         painter.drawLine(0, int(mid_y), self.width(), int(mid_y))
         
-        # 4. 실시간 파형 그리기 (성능 최적화를 위해 점 간격(step) 조절)
+        # 4. Draw real-time waveform (adjust point step for performance optimization)
         painter.setPen(QPen(QColor(COLOR_GREEN), 1))
         width = self.width()
         height = self.height()
@@ -152,7 +152,7 @@ class RealTimeWaveWidget(QWidget):
 
 # ---------------------------------------------------------
 # [2-B. Matplotlib 2-Second Snapshot Canvas]
-# 2초 단위로 TRNG 분석 시점의 파형과 FFT를 보여주는 위젯
+# Widget showing waveform and FFT at the time of TRNG analysis in 2-second units
 # ---------------------------------------------------------
 class MplCanvas(FigureCanvas):
     def __init__(self, parent=None, width=5, height=6, dpi=100):
@@ -271,7 +271,7 @@ class TRNGVisualizer(QMainWindow):
         self.init_ui_layout()
         self.apply_dark_theme()
         
-        self.append_log("TRNG 시각화 시뮬레이터 준비 완료. 'START' 버튼을 눌러 측정을 시작하십시오.")
+        self.append_log("TRNG visualization simulator ready. Press 'START' button to begin measurement.")
         
     def init_window_properties(self):
         self.setWindowTitle("True Random Number Generator (TRNG) Real-time Analyzer")
@@ -311,17 +311,76 @@ class TRNGVisualizer(QMainWindow):
         self.btn_clear_log.setObjectName("btn_clear")
         self.btn_clear_log.clicked.connect(self.on_clear_log_clicked)
         
+        # Normalize microphone list matching Windows settings
+        self.combo_mic = QComboBox()
+        self.combo_mic.setObjectName("combo_mic")
+
+        # Remove default border and apply dark background to the combobox dropdown
+        self.combo_mic.view().parentWidget().setStyleSheet('background-color: #2e2e2e;')
+        
+        if MIC_AVAILABLE:
+            input_devices = []
+            
+            try:
+                # Get index of Windows default audio subsystem (MME, etc.)
+                default_hostapi = sd.default.hostapi
+            except Exception:
+                default_hostapi = -1
+                
+            # Step 1: Extract only devices belonging to the default Host API
+            # Fundamentally block sub-pins (Array 1, 2) and duplicate devices fragmented from WDM-KS, etc.
+            for i, d in enumerate(devices):
+                if d['max_input_channels'] > 0 and d['hostapi'] == default_hostapi:
+                    name = d['name'].strip()
+                    lower_name = name.lower()
+                    
+                    # Exclude system virtual routing like Microsoft Sound Mapper
+                    if "mapper" in lower_name or "매퍼" in lower_name:
+                        continue
+                    input_devices.append((i, name))
+                    
+            # Step 2: If no devices are found in Step 1, apply strong heuristic filter targeting all APIs
+            if not input_devices:
+                seen_names = set()
+                for i, d in enumerate(devices):
+                    if d['max_input_channels'] > 0:
+                        name = d['name'].strip()
+                        lower_name = name.lower()
+                        
+                        # Strictly exclude virtual devices, Primary Sound Capture remnants, system driver filenames (.sys), and loopbacks (Mix)
+                        if "mapper" in lower_name or "매퍼" in lower_name: continue
+                        if "primary" in lower_name or "주 사운드" in lower_name: continue
+                        if "@system32" in lower_name or ".sys" in lower_name: continue
+                        if "mix" in lower_name or "믹스" in lower_name: continue
+                        
+                        if name not in seen_names:
+                            seen_names.add(name)
+                            input_devices.append((i, name))
+                            
+            # Add final combobox items (last duplicate and LE defense code)
+            seen_final = set()
+            for i, name in input_devices:
+                if name not in seen_final:
+                    # Ensure exactly identical names are not added more than once
+                    seen_final.add(name)
+                    self.combo_mic.addItem(name, i)
+        else:
+            self.combo_mic.addItem("No microphone device found", None)
+            self.combo_mic.setEnabled(False)
+        # -----------------------------------------------------
+
         top_panel.addWidget(self.btn_start)
         top_panel.addWidget(self.btn_stop)
         top_panel.addWidget(self.btn_save)
         top_panel.addWidget(self.btn_clear_log)
+        top_panel.addWidget(self.combo_mic) 
         main_layout.addLayout(top_panel)
         
         # --- MIDDLE PANEL ---
         mid_splitter = QSplitter(Qt.Orientation.Horizontal)
         mid_splitter.setHandleWidth(4)
         
-        # 1) 좌측: 그래프 영역 (실시간 파형 + 2초 스냅샷)
+        # 1) Left: Graph area (Real-time waveform + 2s snapshot)
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -334,7 +393,7 @@ class TRNGVisualizer(QMainWindow):
         left_layout.addWidget(self.canvas)
         mid_splitter.addWidget(left_panel)
         
-        # 2) 우측: 실시간 정보 영역
+        # 2) Right: Real-time info area
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
         right_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
@@ -375,11 +434,11 @@ class TRNGVisualizer(QMainWindow):
         flow_card_layout.addLayout(flow_row)
         right_layout.addWidget(flow_card)
         
-        # B. 신호 통계 및 엔트로피 요약
+        # B. Signal Statistics and Entropy Summary
         stats_entropy_row = QHBoxLayout()
         stats_entropy_row.setSpacing(12)
         
-        # B-1. 신호 통계
+        # B-1. Signal statistics
         stats_card = QFrame()
         stats_card_layout = QVBoxLayout(stats_card)
         stats_card_layout.addWidget(self.create_card_title("2. Raw Noise Signal Statistics"))
@@ -408,7 +467,7 @@ class TRNGVisualizer(QMainWindow):
         stats_card_layout.addLayout(stats_grid)
         stats_entropy_row.addWidget(stats_card)
         
-        # B-2. 엔트로피 분석
+        # B-2. Entropy analysis
         entropy_card = QFrame()
         entropy_card_layout = QVBoxLayout(entropy_card)
         entropy_card_layout.addWidget(self.create_card_title("3. Entropy & Signal Quality"))
@@ -453,13 +512,13 @@ class TRNGVisualizer(QMainWindow):
         
         right_layout.addLayout(stats_entropy_row)
         
-        # C. LSB 시각화
+        # C. LSB Visualization
         lsb_card = QFrame()
         lsb_layout = QVBoxLayout(lsb_card)
         lsb_layout.setSpacing(6)
         lsb_layout.addWidget(self.create_card_title("4. Least Significant Bit (LSB) Extraction"))
         
-        lbl_desc = QLabel("아날로그 노이즈 데이터의 하위 비트(LSB)는 미세 기하학적 흔들림(열적 카오스)을 포함하여 물리적 무작위성이 가장 강력한 영역입니다.")
+        lbl_desc = QLabel("The Least Significant Bit (LSB) of analog noise data is the area with the strongest physical randomness, including fine geometric fluctuations (thermal chaos).")
         lbl_desc.setFont(QFont("Segoe UI", 7))
         lbl_desc.setStyleSheet(f"color: {COLOR_MUTED}; line-height: 1.2;")
         lbl_desc.setWordWrap(True)
@@ -467,7 +526,7 @@ class TRNGVisualizer(QMainWindow):
         
         self.lbl_lsb_table = QLabel()
         self.lbl_lsb_table.setTextFormat(Qt.TextFormat.RichText)
-        self.lbl_lsb_table.setText("<p style='color:#666666; font-family:Consolas; font-size:10px;'>수집 데이터를 대기 중입니다...</p>")
+        self.lbl_lsb_table.setText("<p style='color:#666666; font-family:Consolas; font-size:10px;'>Waiting for collected data...</p>")
         lsb_layout.addWidget(self.lbl_lsb_table)
         
         lbl_raw_stream = QLabel("EXTRACTED RAW LSB BITSTREAM (FIRST 48 SAMPLES)")
@@ -483,7 +542,7 @@ class TRNGVisualizer(QMainWindow):
         
         right_layout.addWidget(lsb_card)
         
-        # D. SHA-256 후처리
+        # D. SHA-256 Post-Processing
         post_card = QFrame()
         post_layout = QVBoxLayout(post_card)
         post_layout.setSpacing(6)
@@ -546,18 +605,20 @@ class TRNGVisualizer(QMainWindow):
     def on_start_clicked(self):
         if not MIC_AVAILABLE:
             from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.critical(self, "하드웨어 에러", "물리적 마이크 장치가 감지되지 않아 시작할 수 없습니다.")
+            QMessageBox.critical(self, "Hardware Error", "Physical microphone device not detected. Cannot start.")
             return
 
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.btn_save.setEnabled(True)
+        self.combo_mic.setEnabled(False) # Device cannot be changed while running
         
-        self.worker = AudioWorker(samplerate=self.samplerate, duration=self.duration)
+        selected_device_id = self.combo_mic.currentData()
+        self.worker = AudioWorker(samplerate=self.samplerate, duration=self.duration, device_id=selected_device_id)
         
-        # 실시간 데이터 연결
+        # Connect real-time data
         self.worker.realtime_data_ready.connect(self.live_wave.update_wave)
-        # 2초 주기 TRNG 데이터 연결
+        # Connect 2-second cycle TRNG data
         self.worker.data_ready.connect(self.on_audio_data_received)
         
         self.worker.log_signal.connect(self.append_log)
@@ -568,10 +629,11 @@ class TRNGVisualizer(QMainWindow):
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.stop()
             self.worker.wait()
-            self.append_log("수집 프로세스를 중지했습니다.")
+            self.append_log("Collection process stopped.")
             
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
+        self.combo_mic.setEnabled(True) # Device can be changed when stopped
         self.reset_flow_pipeline()
         
     def on_clear_log_clicked(self):
@@ -579,7 +641,7 @@ class TRNGVisualizer(QMainWindow):
         
     def on_save_clicked(self):
         if self.latest_random_data is None:
-            self.append_log("[경고] 추출된 난수 데이터가 없습니다.")
+            self.append_log("[Warning] No extracted random number data.")
             return
             
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -591,9 +653,9 @@ class TRNGVisualizer(QMainWindow):
                 file.write(f"Noise Quality       : {self.latest_random_data['quality']:.2f}%\n")
                 file.write(f"SHA-256 Hash Digest : {self.latest_random_data['sha256']}\n")
                 file.write(f"64-bit Random Uint  : {self.latest_random_data['rand_num']}\n")
-            self.append_log(f"파일 저장 완료: '{filename}'")
+            self.append_log(f"File saved successfully: '{filename}'")
         except Exception as e:
-            self.append_log(f"파일 저장 실패: {str(e)}")
+            self.append_log(f"File save failed: {str(e)}")
 
     def append_log(self, text):
         now = datetime.datetime.now().strftime("%H:%M:%S")
@@ -745,6 +807,11 @@ class TRNGVisualizer(QMainWindow):
             QPushButton#btn_stop:hover {{ background-color: #421817; }}
             QPushButton#btn_save {{ background-color: #0d2a30; border: 1px solid {COLOR_ACCENT}; color: {COLOR_ACCENT}; }}
             QPushButton#btn_save:hover {{ background-color: #143e47; }}
+            
+            QComboBox {{ background-color: #252525; border: 1px solid #3d3d3d; border-radius: 5px; color: #ffffff; padding: 4px 10px; font-weight: bold; font-size: 11px; }}
+            QComboBox::drop-down {{ border: none; }}
+            QComboBox QAbstractItemView {{ background-color: #1a1a1a; color: #ffffff; selection-background-color: {COLOR_ACCENT}; selection-color: #000000; border: 1px solid #3d3d3d; }}
+            QComboBox:disabled {{ background-color: #151515; border-color: #222222; color: #555555; }}
             
             QScrollBar:vertical {{ background: #111111; width: 8px; margin: 0px 0px 0px 0px; }}
             QScrollBar::handle:vertical {{ background: #333333; min-height: 20px; border-radius: 4px; }}
