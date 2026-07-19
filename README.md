@@ -12,7 +12,7 @@ This project is a **True Random Number Generator (TRNG) real-time visualization 
 * **2-Second Snapshot & Frequency Analysis (FFT):** Buffers data every 2 seconds to provide `Matplotlib`-based waveform and frequency spectrum (FFT) graphs.
 
 
-* **Signal Statistics & Entropy Calculation:** Evaluates noise quality by calculating real-time entropy ($H = -\sum P(x_i) \log_2 P(x_i)$) along with the amplitude (Max/Min), Mean, Standard Deviation (Std Dev), and RMS values of the collected noise.
+* **Signal Statistics & Entropy Calculation:** Evaluates noise quality by calculating real-time entropy ($$H = -\sum P(x_i) \log_2 P(x_i)$$) along with the amplitude (Max/Min), Mean, Standard Deviation (Std Dev), and RMS values of the collected noise.
 
 
 * **LSB Extraction & Visualization:** Extracts the Least Significant Bits (LSBs), which contain the strongest physical randomness, from the sampled data and visualizes them as binary data in a table.
