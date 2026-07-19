@@ -367,7 +367,6 @@ class TRNGVisualizer(QMainWindow):
         else:
             self.combo_mic.addItem("No microphone device found", None)
             self.combo_mic.setEnabled(False)
-        # -----------------------------------------------------
 
         top_panel.addWidget(self.btn_start)
         top_panel.addWidget(self.btn_stop)
