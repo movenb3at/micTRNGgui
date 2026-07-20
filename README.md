@@ -113,9 +113,11 @@ python main.py
 
 * You can monitor the real-time operational status and potential errors through the **PROCESS EXECUTION LOG** window at the bottom.
 
+---
+## Screenshots & Video Example
+![Usage Screenshot](usage/usage.png)
 
-
-
+![Usage Video](usage/usage.gif)
 
 ---
 
